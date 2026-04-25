@@ -4,6 +4,7 @@ const morgan = require('morgan');
 const express = require('express');
 const cors = require('cors'); // frontend baglantisi icin cors
 const pool = require('./db');
+const bcrypt = require('bcrypt'); // Sifreleme icin
 require('dotenv').config();
 
 const app = express();
@@ -164,6 +165,67 @@ app.put('/filmler/:id', async (req, res) => {
   }
 });
 
+
+// kullanici kayit
+app.post('/kayit', async (req, res) => {
+  try {
+    const { email, sifre } = req.body;
+
+    // sifreyi güvenli hale getime (Hashing)
+    const tuz = await bcrypt.genSalt(10); // Şifreye rastgele karakterler ekler (tuzlama)
+    const hashliSifre = await bcrypt.hash(sifre, tuz); // Şifreyi karmaşık bir hale sokar
+
+    // kullaniciyi veritabanına ekleme
+    const yeniKullanici = await pool.query(
+      'INSERT INTO kullanicilar ( email, sifre) VALUES ($1, $2) RETURNING *',
+      [ email, hashliSifre]
+    );
+
+    
+    res.json({ 
+      message: "Kayıt başarılı!", 
+      kullanici: yeniKullanici.rows[0].email
+    });
+
+  } catch (err) {
+    console.error("HATA:", err.message);
+    res.status(500).send("Kayıt hatası: " + err.message);
+  }
+});
+
+
+
+// giris yapma
+app.post('/giris', async (req, res) => {
+  try {
+    const { email, sifre } = req.body;
+
+    // kullanıcıyı e-mail adresinden bulalım
+    const kullanici = await pool.query('SELECT * FROM kullanicilar WHERE email = $1', [email]);
+
+    // kullanıcı yoksa hata dönelim
+    if (kullanici.rows.length === 0) {
+      return res.status(401).json({ message: "Geçersiz e-mail veya şifre!" });
+    }
+
+    // sifreleri karşılaştıralım (Gelen şifre vs Veritabanındaki hashli şifre)
+    const sifreDogruMu = await bcrypt.compare(sifre, kullanici.rows[0].sifre);
+
+    if (!sifreDogruMu) {
+      return res.status(401).json({ message: "Geçersiz e-mail veya şifre!" });
+    }
+
+    // her şey doğruysa giriş başarılı!
+    res.json({ 
+      message: "Giriş başarılı! Hoş geldin.", 
+      email: kullanici.rows[0].email 
+    });
+
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).send("Giriş işlemi sırasında bir sunucu hatası oluştu.");
+  }
+});
 
 
 
