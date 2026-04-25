@@ -1,12 +1,10 @@
 const morgan = require('morgan'); 
-
-
 const express = require('express');
 const cors = require('cors'); // frontend baglantisi icin cors
 const pool = require('./db');
 const bcrypt = require('bcrypt'); // Sifreleme icin
+const jwt = require('jsonwebtoken'); // Token olusturmak icin
 require('dotenv').config();
-
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -20,6 +18,25 @@ app.get('/', (req, res) => {
   res.send('Sine Kritik Backend is running!');
 });
 
+
+// guvenlik kontrolu fonksiyonu
+const dogrula = (req, res, next) => {
+  // Kullanıcıdan gelen isteğin başlığındaki token'ı alıyoruz
+  const token = req.header("token");
+
+  if (!token) {
+    return res.status(403).json({ message: "Bu gizli bir alan! Önce giriş yapmalısın." });
+  }
+
+  try {
+    // Token gerçekten bizim mührümüzü mü taşıyor kontrol ediyoruz
+    const dogrulanan = jwt.verify(token, "cok_gizli_bir_anahtar");
+    req.user = dogrulanan; 
+    next(); // Her şey tamamsa bir sonraki adıma geç
+  } catch (err) {
+    res.status(401).json({ message: "Geçersiz veya süresi dolmuş token!" });
+  }
+};
 
 
 // Tüm filmleri listeleme
@@ -199,33 +216,55 @@ app.post('/kayit', async (req, res) => {
 app.post('/giris', async (req, res) => {
   try {
     const { email, sifre } = req.body;
-
-    // kullanıcıyı e-mail adresinden bulalım
     const kullanici = await pool.query('SELECT * FROM kullanicilar WHERE email = $1', [email]);
 
-    // kullanıcı yoksa hata dönelim
     if (kullanici.rows.length === 0) {
-      return res.status(401).json({ message: "Geçersiz e-mail veya şifre!" });
+      return res.status(401).json({ message: "Geçersiz giriş!" });
     }
 
-    // sifreleri karşılaştıralım (Gelen şifre vs Veritabanındaki hashli şifre)
     const sifreDogruMu = await bcrypt.compare(sifre, kullanici.rows[0].sifre);
-
     if (!sifreDogruMu) {
-      return res.status(401).json({ message: "Geçersiz e-mail veya şifre!" });
+      return res.status(401).json({ message: "Geçersiz giriş!" });
     }
 
-    // her şey doğruysa giriş başarılı!
+    //  JWT - Kullanıcıya özel token üretme
+    const token = jwt.sign(
+      { id: kullanici.rows[0].id, email: kullanici.rows[0].email },
+      "cok_gizli_bir_anahtar",
+      { expiresIn: '1h' } // 1 saat geçerli
+    );
+
     res.json({ 
-      message: "Giriş başarılı! Hoş geldin.", 
-      email: kullanici.rows[0].email 
+      message: "Giriş başarılı!", 
+      token: token 
     });
 
   } catch (err) {
-    console.error(err.message);
-    res.status(500).send("Giriş işlemi sırasında bir sunucu hatası oluştu.");
+    res.status(500).send("Sunucu hatası.");
   }
 });
+
+
+
+// kullanicinin elinde token yoksa film ekleyemesin
+const dogrula = (req, res, next) => {
+  const token = req.header("token"); // Kullanıcı token'ı "token" başlığıyla göndermeli
+
+  if (!token) {
+    return res.status(403).json({ message: "Bu işlem için giriş yapmalısınız!" });
+  }
+
+  try {
+    const dogrulanmisVeri = jwt.verify(token, "cok_gizli_bir_anahtar");
+    req.user = dogrulanmisVeri; // Token içindeki kullanıcı bilgilerini isteğe ekle
+    next(); // Her şey yolunda, bir sonraki işleme geçebilirsin
+  } catch (err) {
+    res.status(401).json({ message: "Token geçersiz veya süresi dolmuş!" });
+  }
+};
+
+
+
 
 
 
